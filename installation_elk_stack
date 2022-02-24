@@ -1,0 +1,357 @@
+
+Offline Centos 7 Installation
+------------------------------
+
+ISO Image: http://ftp.itu.edu.tr/Mirror/CentOS/7.9.2009/isos/x86_64/CentOS-7-x86_64-Minimal-2009.iso
+
+Mobaxterm: https://download.mobatek.net/2152021112100754/MobaXterm_Installer_v21.5.zip
+
+sudo su root
+
+vi /etc/sysconfig/network-scripts/ifcfg-enp0s3
+
+"
+...
+ONBOOT=yes
+USERCTL=no
+"
+
+vi /etc/sysconfig/network-scripts/ifcfg-enp0s8
+
+DEVICE=enp0s8
+NAME=enp0s8
+TYPE=Ethernet
+BOOTPROTO=none
+ONBOOT=yes
+IPADDR=192.168.56.101
+PREFIX=24
+
+# Disable firewall on CentOS.
+
+systemctl stop firewalld.service && systemctl disable firewalld.service
+
+Disable SELINUX vi /etc/sysconfig/selinux
+
+# SELINUX=permissive
+SELINUX=disabled
+
+-------- Passing Mobaxterm UI -----------
+
+[odata@localhost ~]$ 
+
+sudo yum install java-1.8.0-openjdk.x86_64
+
+java -version
+
+sudo yum install -y perl-Digest-SHA
+sudo yum install nano
+sudo yum install wget
+
+mkdir packages
+cd packages
+
+[odata@localhost packages]$ 
+
+sudo rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch
+
+sudo nano /etc/yum.repos.d/elasticsearch.repo
+
+-------------/elasticsearch.repo/-------------
+
+[elasticsearch]
+name=Elasticsearch repository for 7.x packages
+baseurl=https://artifacts.elastic.co/packages/7.x/yum
+gpgcheck=1
+gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch
+enabled=0
+autorefresh=1
+type=rpm-md
+
+-------------/elasticsearch.repo/-------------
+
+
+wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-7.9.2-x86_64.rpm.sha512
+wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-7.9.2-x86_64.rpm
+
+shasum -a 512 -c elasticsearch-7.9.2-x86_64.rpm.sha512
+
+sudo rpm -ivh elasticsearch-7.9.2-x86_64.rpm
+
+---- Elasticsearch kurulumuna geçmeden önce Centos Makinemizi klonlayalım. (***)
+------------------------------------------------------------
+MasterNode-1 :
+---------------
+Mobaxterm:: ssh odata@192.168.56.101 -p 22
+
+[odata@localhost ~]$ sudo nano /etc/sysconfig/network-scripts/ifcfg-enp0s8
+
+..
+IPADDR=192.168.56.102
+..
+
+[odata@localhost ~]$ reboot
+------------------------------------------------------------
+DataNode-1 :
+---------------
+Mobaxterm:: ssh odata@192.168.56.101 -p 22
+
+[odata@localhost ~]$ sudo nano /etc/sysconfig/network-scripts/ifcfg-enp0s8
+
+..
+IPADDR=192.168.56.103
+..
+
+[odata@localhost ~]$ reboot
+------------------------------------------------------------
+DataNode-2 :
+---------------
+Mobaxterm:: ssh odata@192.168.56.101 -p 22
+
+[odata@localhost ~]$ sudo nano /etc/sysconfig/network-scripts/ifcfg-enp0s8
+
+..
+IPADDR=192.168.56.104
+..
+
+[odata@localhost ~]$ reboot
+
+------------------------------------------------------------
+MasterNode-1: ssh odata@192.168.56.102 -p 22
+
+[root@localhost ~]# su - odata
+
+[odata@localhost]$ sudo usermod -aG wheel odata
+
+[odata@localhost]$ shasum -a 512 -c elasticsearch-7.9.2-x86_64.rpm.sha512
+
+[odata@localhost]$ sudo rpm -ivh elasticsearch-7.9.2-x86_64.rpm
+
+[odata@localhost]$ sudo nano /etc/elasticsearch/elasticsearch.yml
+
+[odata@localhost]$ /bin/systemctl enable elasticsearch.service
+
+	==== AUTHENTICATING FOR org.freedesktop.systemd1.manage-unit-files ===
+	Authentication is required to manage system service or unit files.
+	Authenticating as: Ostim Big Data (odata)
+	Password:
+	==== AUTHENTICATION COMPLETE ===
+	
+	==== AUTHENTICATING FOR org.freedesktop.systemd1.reload-daemon ===
+	Authentication is required to reload the systemd state.
+	Authenticating as: Ostim Big Data (odata)
+	Password:
+	==== AUTHENTICATION COMPLETE ===
+
+
+systemctl start elasticsearch
+
+systemctl stop elasticsearch
+
+sudo /bin/systemctl daemon-reload
+
+sudo -i service elasticsearch restart
+
+ps -ef | grep elastic
+
+[root@es-client ~]# nano /etc/hosts
+
+127.0.0.1      localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1            localhost localhost.localdomain localhost6 localhost6.localdomain6
+192.168.56.102   elk_masternode-1
+192.168.56.103   elk_datanode-1
+192.168.56.104   elk_datanode-2
+
+---//---
+
+curl -X GET "192.168.56.102:9200"
+
+curl -XGET 'http://localhost:9200/_cluster/state?pretty'
+
+
+	chmod -R 775 /etc/elasticsearch/
+
+
+---------- Data Node Üzerinde Movielens Verisi -------
+
+wget https://files.grouplens.org/datasets/movielens/ml-latest.zip
+
+unzip ml-latest.zip
+
+
+curl -H "Content-Type: application/json" -XPUT http://192.168.56.103:9200/movies -d '
+{
+	"mappings": {
+			"properties": {
+				"year": { "type": "date"}
+			}
+		}
+	}
+}'
+
+curl -H "Content-Type: application/json" -XGET http://192.168.56.103:9200/movies/_mapping?pretty
+
+############  Insert a single movie ############ 
+
+curl -H "Content-Type: application/json" -XPOST http://192.168.56.103:9200/movies/_doc/109487 -d '
+{
+"genre": ["Sci-Fi","IMAX"],
+"title": "Interstellar",
+"year": 2014
+}'
+
+
+curl http://192.168.56.103:9200/movies/movie/_search?pretty
+
+############  Insert a multiple movie ############ 
+
+curl -H "Content-Type: application/json" -XPOST http://192.168.56.103:9200/_bulk?pretty --data-binary @movies.csv
+
+############  Update a movie ############ 
+
+curl -H "Content-Type: application/json" -XPOST http://192.168.56.103:9200/movies/_doc/109487/_update -d '
+{
+"doc": {
+"title": "Interstella Woo!"
+}
+}'
+
+############  Delete a movie ############ 
+
+curl -H "Content-Type: application/json" -XDELETE http://192.168.56.103:9200/movies/_doc/58559/
+
+############  Using Anlayzers ############ 
+
+curl -H "Content-Type: application/json" -XGET http://192.168.56.103:9200/movies/_search?pretty -d '
+{
+"query": {
+"match": { 
+"title": "Star Trek" 
+}
+}
+}'
+
+----------------------------------------------------------------------
+
+Kibana Source: https://www.elastic.co/guide/en/kibana/7.9/rpm.html
+
+[odata@localhost ~]$ sudo nano /etc/sysconfig/network-scripts/ifcfg-enp0s8
+
+..
+IPADDR=192.168.56.107
+..
+
+[odata@localhost ~]$ reboot
+
+rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch
+
+sudo nano /etc/yum.repos.d/kibana.repo
+
+-------------/kibana.repo/-------------
+[kibana-7.x]
+name=Kibana repository for 7.x packages
+baseurl=https://artifacts.elastic.co/packages/7.x/yum
+gpgcheck=1
+gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch
+enabled=1
+autorefresh=1
+type=rpm-md
+-------------/kibana.repo/-------------
+
+cd packages/
+
+wget https://artifacts.elastic.co/downloads/kibana/kibana-7.9.2-x86_64.rpm
+
+shasum -a 512 kibana-7.9.2-x86_64.rpm 
+
+sudo rpm -ivh kibana-7.9.2-x86_64.rpm
+
+
+nano /etc/kibana/kibana.yml
+
+$ sudo nano /etc/kibana/kibana.yml
+server.host: "192.168.56.107"
+server.name: "kibana.example.com"
+elasticsearch.url: "http://192.168.56.102:9200"
+
+
+sudo /bin/systemctl daemon-reload
+sudo /bin/systemctl enable kibana.service
+
+sudo systemctl enable kibana
+sudo systemctl start kibana
+
+## Servisin açılması biraz zaman alabilir 3-4 dk kadar bekleyip, aşağıdaki linkten devam edebilirsiniz.
+
+http://192.168.56.102:5601/app/home#/
+
+
+		# Use the chkconfig command to configure Kibana to start automatically when the system boots up:
+
+		sudo chkconfig --add kibana
+
+		sudo chmod -R 775 /etc/kibana/
+
+
+----------- Logstash ------------
+
+sudo nano /etc/yum.repos.d/logstash.repo
+
+-------------/logstash.repo/-------------
+[logstash-7.x]
+name=Elastic repository for 7.x packages
+baseurl=https://artifacts.elastic.co/packages/7.x/yum
+gpgcheck=1
+gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch
+enabled=1
+autorefresh=1
+type=rpm-md
+
+cd packages/
+
+wget https://artifacts.elastic.co/downloads/logstash/logstash-7.9.2.rpm
+
+wget https://artifacts.elastic.co/downloads/logstash/logstash-7.9.2.rpm.sha512
+
+sudo rpm -ivh logstash-7.9.2.rpm
+
+sudo nano /etc/logstash/conf.d/logstash.conf
+
+# sudo nano /etc/logstash/conf.d/beats-input.conf
+
+cd /usr/share/logstash/
+
+sudo bin/logstash -f /etc/logstash/conf.d/logstash.conf
+
+curl  -XGET 192.168.56.102:9200/_cat/indices?v
+
+curl -XGET '192.168.56.102:9200/logstash-2022.02.01-000001/_search?pretty'
+
+
+-------------/beats-input.conf/-------------
+
+input {
+    beats {
+        port => "5044"
+    }
+}
+# The filter part of this file is commented out to indicate that it is optional.
+# filter {
+#
+# }
+output {
+    stdout { codec => rubydebug }
+}
+-------------/beats-input.conf/-------------
+
+
+sudo nano /etc/logstash/conf.d/elasticsearch-output.conf
+
+-------------/elasticsearch-output.conf/-------------
+output {
+    host => ["localhost:9200"]
+	manage_template => false
+	index => "%{[@metadata][beat]}-%{[@metadata][version]}-%{+YYYY.MM.dd}"
+}
+-------------/elasticsearch-output.conf/-------------
+
+
